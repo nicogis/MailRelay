@@ -684,13 +684,6 @@ public sealed partial class Worker : BackgroundService
         string response)
         => writer.WriteLineAsync(response);
 
-    public override Task StopAsync(
-        CancellationToken cancellationToken)
-    {
-        _listener?.Stop();
-        return base.StopAsync(cancellationToken);
-    }
-
     [LoggerMessage(
         EventId = 1001,
         Level = LogLevel.Information,
