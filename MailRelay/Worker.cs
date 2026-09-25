@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 
 namespace MailRelay;
 
-public sealed class Worker : BackgroundService
+public sealed partial class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
     private readonly RelayOptions _options;
@@ -20,12 +20,12 @@ public sealed class Worker : BackgroundService
 
         _listener = new TcpListener(IPAddress.Parse(_options.ListenAddress), _options.ListenPort);
         _listener.Start();
-        _logger.LogInformation("SMTP relay listening on {Address}:{Port}", _options.ListenAddress, _options.ListenPort);
+        LogRelayListening(_logger, _options.ListenAddress, _options.ListenPort);
         while (!stoppingToken.IsCancellationRequested)
         {
             try { var client = await _listener.AcceptTcpClientAsync(stoppingToken); _ = HandleClientAsync(client, stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-            catch (Exception ex) { _logger.LogError(ex, "Error accepting SMTP connection."); }
+            catch (Exception ex) { LogAcceptConnectionError(_logger, ex); }
         }
     }
 
@@ -67,7 +67,7 @@ public sealed class Worker : BackgroundService
                 }
             }
         }
-        catch (Exception ex) { _logger.LogError(ex, "SMTP client connection error."); }
+        catch (Exception ex) { LogClientConnectionError(_logger, ex); }
     }
 
     private async Task<(string? Mime, bool TooLarge)> ReadData(StreamReader reader, CancellationToken ct)
@@ -94,14 +94,20 @@ public sealed class Worker : BackgroundService
             try
             {
                 var email = new Chilkat.Email();
-                if (!email.SetFromMimeText(mime)) { _logger.LogError("Unable to parse MIME: {Error}", email.LastErrorText); return false; }
+                if (!email.SetFromMimeText(mime)) { LogMimeParseError(_logger, email.LastErrorText); return false; }
                 if (string.IsNullOrWhiteSpace(email.FromAddress)) email.From = envelopeFrom;
                 var mailman = new Chilkat.MailMan { SmtpHost = _options.SmtpHost, SmtpPort = _options.SmtpPort, SmtpSsl = _options.SmtpSsl, SmtpUsername = _options.Username, SmtpPassword = _options.Password };
-                _logger.LogInformation("Forwarding mail from {From} to {Recipients}", envelopeFrom, string.Join(", ", recipients));
-                if (!mailman.SendEmail(email)) { _logger.LogError("Chilkat SMTP error: {Error}", mailman.LastErrorText); return false; }
-                _logger.LogInformation("Mail successfully forwarded."); return true;
+                if (_logger.IsEnabled(LogLevel.Information))
+                {
+                    LogForwardingMail(
+                        _logger,
+                        envelopeFrom,
+                        string.Join(", ", recipients));
+                }
+                if (!mailman.SendEmail(email)) { LogSmtpError(_logger, mailman.LastErrorText); return false; }
+                LogMailForwarded(_logger); return true;
             }
-            catch (Exception ex) { _logger.LogError(ex, "Unexpected SMTP forwarding error."); return false; }
+            catch (Exception ex) { LogUnexpectedForwardingError(_logger, ex); return false; }
         }, ct);
     }
 
@@ -121,8 +127,79 @@ public sealed class Worker : BackgroundService
                 $"Unable to unlock Chilkat: {global.LastErrorText}");
         }
 
-        _logger.LogInformation("Chilkat successfully initialized.");
+        LogChilkatInitialized(_logger);
     }
+
+
+    [LoggerMessage(
+        EventId = 1001,
+        Level = LogLevel.Information,
+        Message = "SMTP relay listening on {Address}:{Port}")]
+    private static partial void LogRelayListening(
+        ILogger logger,
+        string address,
+        int port);
+
+    [LoggerMessage(
+        EventId = 1002,
+        Level = LogLevel.Information,
+        Message = "Forwarding mail from {From} to {Recipients}")]
+    private static partial void LogForwardingMail(
+        ILogger logger,
+        string from,
+        string recipients);
+
+    [LoggerMessage(
+        EventId = 1003,
+        Level = LogLevel.Information,
+        Message = "Mail successfully forwarded.")]
+    private static partial void LogMailForwarded(ILogger logger);
+
+    [LoggerMessage(
+        EventId = 1004,
+        Level = LogLevel.Information,
+        Message = "Chilkat successfully initialized.")]
+    private static partial void LogChilkatInitialized(ILogger logger);
+
+    [LoggerMessage(
+        EventId = 2001,
+        Level = LogLevel.Error,
+        Message = "Error accepting SMTP connection.")]
+    private static partial void LogAcceptConnectionError(
+        ILogger logger,
+        Exception exception);
+
+    [LoggerMessage(
+        EventId = 2002,
+        Level = LogLevel.Error,
+        Message = "SMTP client connection error.")]
+    private static partial void LogClientConnectionError(
+        ILogger logger,
+        Exception exception);
+
+    [LoggerMessage(
+        EventId = 2003,
+        Level = LogLevel.Error,
+        Message = "Unable to parse MIME: {Error}")]
+    private static partial void LogMimeParseError(
+        ILogger logger,
+        string error);
+
+    [LoggerMessage(
+        EventId = 2004,
+        Level = LogLevel.Error,
+        Message = "Chilkat SMTP error: {Error}")]
+    private static partial void LogSmtpError(
+        ILogger logger,
+        string error);
+
+    [LoggerMessage(
+        EventId = 2005,
+        Level = LogLevel.Error,
+        Message = "Unexpected SMTP forwarding error.")]
+    private static partial void LogUnexpectedForwardingError(
+        ILogger logger,
+        Exception exception);
 
     private static string Address(string value)
     {
