@@ -225,6 +225,14 @@ public sealed partial class Worker : BackgroundService
                 }
             }
         }
+        catch (IOException ex)
+            when (ex.InnerException is SocketException socketException &&
+                  socketException.SocketErrorCode is
+                      SocketError.ConnectionAborted or
+                      SocketError.ConnectionReset)
+        {
+            LogClientDisconnected(_logger, socketException.SocketErrorCode);
+        }
         catch (Exception ex)
         {
             LogClientConnectionError(_logger, ex);
@@ -748,6 +756,14 @@ public sealed partial class Worker : BackgroundService
         string messageId,
         int attempt,
         int delaySeconds);
+
+    [LoggerMessage(
+        EventId = 1009,
+        Level = LogLevel.Debug,
+        Message = "SMTP client disconnected with socket error {SocketErrorCode}.")]
+    private static partial void LogClientDisconnected(
+        ILogger logger,
+        SocketError socketErrorCode);
 
     [LoggerMessage(
         EventId = 2001,
