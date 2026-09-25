@@ -1,11 +1,8 @@
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
-
 namespace MailRelay;
 
 public sealed class DailyFileLoggerProvider : ILoggerProvider
 {
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private readonly string _directory;
     private readonly int _retainedDays;
     private readonly bool _enabled;
