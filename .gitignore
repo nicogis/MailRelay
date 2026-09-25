@@ -427,3 +427,10 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+
+# MailRelay local configuration / secrets
+appsettings.Local.json
+**/appsettings.Local.json
+secrets.json
+**/secrets.json
