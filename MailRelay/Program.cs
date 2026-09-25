@@ -9,6 +9,9 @@ builder.Configuration.AddJsonFile(
     optional: true,
     reloadOnChange: false);
 
+builder.Logging.AddProvider(
+    DailyFileLoggerProvider.Create(builder.Configuration));
+
 builder.Services.AddWindowsService(options =>
 {
     options.ServiceName = "Mail Relay";
