@@ -55,9 +55,19 @@ public sealed partial class Worker : BackgroundService
                         if (string.IsNullOrWhiteSpace(from)) { await Reply(writer, "503 MAIL FROM required"); continue; }
                         if (recipients.Count == 0) { await Reply(writer, "503 RCPT TO required"); continue; }
                         await Reply(writer, "354 End data with <CR><LF>.<CR><LF>");
-                        var data = await ReadData(reader, ct);
-                        if (data.TooLarge) await Reply(writer, "552 Message size exceeds fixed maximum message size");
-                        else await Reply(writer, await Forward(data.Mime!, from, recipients, ct) ? "250 Message accepted for delivery" : "451 Unable to relay message");
+                        var (mime, tooLarge) = await ReadData(reader, ct);
+                        if (tooLarge)
+                        {
+                            await Reply(writer, "552 Message size exceeds fixed maximum message size");
+                        }
+                        else
+                        {
+                            await Reply(
+                                writer,
+                                await Forward(mime!, from, recipients, ct)
+                                    ? "250 Message accepted for delivery"
+                                    : "451 Unable to relay message");
+                        }
                         from = null; recipients.Clear();
                     }
                     else if (line.Equals("RSET", StringComparison.OrdinalIgnoreCase)) { from = null; recipients.Clear(); await Reply(writer, "250 OK"); }
@@ -97,13 +107,10 @@ public sealed partial class Worker : BackgroundService
                 if (!email.SetFromMimeText(mime)) { LogMimeParseError(_logger, email.LastErrorText); return false; }
                 if (string.IsNullOrWhiteSpace(email.FromAddress)) email.From = envelopeFrom;
                 var mailman = new Chilkat.MailMan { SmtpHost = _options.SmtpHost, SmtpPort = _options.SmtpPort, SmtpSsl = _options.SmtpSsl, SmtpUsername = _options.Username, SmtpPassword = _options.Password };
-                if (_logger.IsEnabled(LogLevel.Information))
-                {
-                    LogForwardingMail(
-                        _logger,
-                        envelopeFrom,
-                        string.Join(", ", recipients));
-                }
+                LogForwardingMail(
+                    _logger,
+                    envelopeFrom,
+                    recipients);
                 if (!mailman.SendEmail(email)) { LogSmtpError(_logger, mailman.LastErrorText); return false; }
                 LogMailForwarded(_logger); return true;
             }
@@ -147,7 +154,7 @@ public sealed partial class Worker : BackgroundService
     private static partial void LogForwardingMail(
         ILogger logger,
         string from,
-        string recipients);
+        IReadOnlyCollection<string> recipients);
 
     [LoggerMessage(
         EventId = 1003,
