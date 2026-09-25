@@ -16,6 +16,8 @@ public sealed class Worker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        InitializeChilkat();
+
         _listener = new TcpListener(IPAddress.Parse(_options.ListenAddress), _options.ListenPort);
         _listener.Start();
         _logger.LogInformation("SMTP relay listening on {Address}:{Port}", _options.ListenAddress, _options.ListenPort);
@@ -91,11 +93,6 @@ public sealed class Worker : BackgroundService
         {
             try
             {
-                if (!string.IsNullOrWhiteSpace(_options.ChilkatLicenseKey))
-                {
-                    var global = new Chilkat.Global();
-                    if (!global.UnlockBundle(_options.ChilkatLicenseKey)) { _logger.LogError("Chilkat license error: {Error}", global.LastErrorText); return false; }
-                }
                 var email = new Chilkat.Email();
                 if (!email.SetFromMimeText(mime)) { _logger.LogError("Unable to parse MIME: {Error}", email.LastErrorText); return false; }
                 if (string.IsNullOrWhiteSpace(email.FromAddress)) email.From = envelopeFrom;
@@ -106,6 +103,25 @@ public sealed class Worker : BackgroundService
             }
             catch (Exception ex) { _logger.LogError(ex, "Unexpected SMTP forwarding error."); return false; }
         }, ct);
+    }
+
+    private void InitializeChilkat()
+    {
+        if (string.IsNullOrWhiteSpace(_options.ChilkatLicenseKey))
+        {
+            throw new InvalidOperationException(
+                "Chilkat license key is not configured.");
+        }
+
+        var global = new Chilkat.Global();
+
+        if (!global.UnlockBundle(_options.ChilkatLicenseKey))
+        {
+            throw new InvalidOperationException(
+                $"Unable to unlock Chilkat: {global.LastErrorText}");
+        }
+
+        _logger.LogInformation("Chilkat successfully initialized.");
     }
 
     private static string Address(string value)
