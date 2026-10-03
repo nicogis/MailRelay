@@ -22,12 +22,112 @@ External SMTP server
 
 A message is acknowledged to the SMTP client only after it has been persisted to the local queue. If the upstream SMTP server is unavailable, MailRelay keeps the message locally and retries automatically.
 
+
+## Install as a Windows Service
+
+Publish the application to a stable directory, for example:
+
+```powershell
+dotnet publish .\MailRelay\MailRelay.csproj `
+  -c Release `
+  -r win-x64 `
+  --self-contained false `
+  -o C:\Services\MailRelay
+```
+
+Open PowerShell **as Administrator** and create the service:
+
+```powershell
+sc.exe create MailRelay binPath= "C:\Services\MailRelay\MailRelay.exe" start= auto DisplayName= "Mail Relay"
+sc.exe description MailRelay "Local SMTP relay with persistent queue and retry"
+sc.exe start MailRelay
+```
+
+Verify the service:
+
+```powershell
+Get-Service MailRelay
+```
+
+Verify that the local SMTP listener is active:
+
+```powershell
+Get-NetTCPConnection -LocalPort 2525 -ErrorAction SilentlyContinue
+```
+
+The expected listener is `127.0.0.1:2525`.
+
+### Stop and remove the service
+
+```powershell
+sc.exe stop MailRelay
+sc.exe delete MailRelay
+```
+
+Deleting the Windows Service does **not** delete the published application, logs, or queued messages. Remove those directories separately only when they are no longer needed.
+
+
 ## SQL Server Database Mail
 
-- Server: `127.0.0.1`
+MailRelay is useful when SQL Server Database Mail cannot communicate directly with the real SMTP server, for example when the provider requires a TLS mode, authentication mechanism, or OAuth flow that Database Mail cannot handle directly.
+
+Configure the Database Mail account to use MailRelay:
+
+- SMTP server: `127.0.0.1`
 - Port: `2525`
 - SSL: disabled
 - Authentication: Anonymous
+- E-mail address: the real sender address
+
+The flow becomes:
+
+```text
+sp_send_dbmail
+    -> SQL Server Database Mail
+    -> SMTP 127.0.0.1:2525
+    -> MailRelay durable queue
+    -> external SMTP server
+    -> recipient
+```
+
+Example test from SQL Server:
+
+```sql
+EXEC msdb.dbo.sp_send_dbmail
+    @profile_name = 'MailRelay',
+    @recipients = 'recipient@example.com',
+    @subject = 'Test MailRelay',
+    @body = 'Test SQL Server -> MailRelay -> external SMTP';
+```
+
+Check the most recent Database Mail messages:
+
+```sql
+SELECT TOP (20)
+    mailitem_id,
+    sent_status,
+    sent_date,
+    recipients,
+    subject,
+    last_mod_date
+FROM msdb.dbo.sysmail_allitems
+ORDER BY mailitem_id DESC;
+```
+
+Check Database Mail errors:
+
+```sql
+SELECT TOP (50)
+    log_date,
+    event_type,
+    description,
+    process_id,
+    mailitem_id
+FROM msdb.dbo.sysmail_event_log
+ORDER BY log_date DESC;
+```
+
+A `sent` status means SQL Server successfully handed the message to MailRelay. Final delivery to the external SMTP server is then handled by MailRelay and can be verified in its logs and durable queue.
 
 ## Persistent logging
 
@@ -164,6 +264,110 @@ Example PowerShell:
 ```
 
 Restart the Windows Service after changing machine-level environment variables.
+
+
+
+## OAuth2 / XOAUTH2 SMTP option
+
+MailRelay currently supports the username/password SMTP configuration shown above. Chilkat can also authenticate to an SMTP server with an OAuth2 access token by setting `MailMan.OAuth2AccessToken`.
+
+For unattended services, use the OAuth2 **client credentials** flow when the mail provider supports application-only SMTP access. This flow does not require opening a browser: the service requests an access token directly from the provider's token endpoint and then uses the token for SMTP XOAUTH2 authentication.
+
+For Microsoft 365 / Exchange Online, the application must first be authorized for app-only SMTP access in the tenant and for the mailbox that it is allowed to send as. Microsoft supports both Exchange service-principal permission onboarding and the newer Exchange Application RBAC model. Use the model appropriate for the tenant before testing the code below.
+
+### Microsoft 365 example
+
+The SMTP endpoint is normally:
+
+```text
+smtp.office365.com:587
+```
+
+and the token scope for application-only SMTP is:
+
+```text
+https://outlook.office365.com/.default
+```
+
+Example C# token acquisition using a direct HTTP call:
+
+```csharp
+using System.Net.Http.Json;
+using System.Text.Json.Serialization;
+
+public sealed class OAuthTokenResponse
+{
+    [JsonPropertyName("access_token")]
+    public required string AccessToken { get; init; }
+
+    [JsonPropertyName("expires_in")]
+    public int ExpiresIn { get; init; }
+}
+
+static async Task<string> GetMicrosoft365AccessTokenAsync(
+    string tenantId,
+    string clientId,
+    string clientSecret,
+    CancellationToken cancellationToken)
+{
+    using var http = new HttpClient();
+
+    using var content = new FormUrlEncodedContent(
+        new Dictionary<string, string>
+        {
+            ["client_id"] = clientId,
+            ["client_secret"] = clientSecret,
+            ["scope"] = "https://outlook.office365.com/.default",
+            ["grant_type"] = "client_credentials"
+        });
+
+    using var response = await http.PostAsync(
+        $"https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token",
+        content,
+        cancellationToken);
+
+    response.EnsureSuccessStatusCode();
+
+    var token = await response.Content.ReadFromJsonAsync<OAuthTokenResponse>(
+        cancellationToken: cancellationToken)
+        ?? throw new InvalidOperationException(
+            "The OAuth token endpoint returned an empty response.");
+
+    return token.AccessToken;
+}
+```
+
+Use the access token with Chilkat:
+
+```csharp
+var accessToken = await GetMicrosoft365AccessTokenAsync(
+    tenantId,
+    clientId,
+    clientSecret,
+    cancellationToken);
+
+var mailman = new Chilkat.MailMan
+{
+    SmtpHost = "smtp.office365.com",
+    SmtpPort = 587,
+    SmtpSsl = false,
+    StartTLS = true,
+    SmtpUsername = "sender@example.com",
+    SmtpPassword = "",
+    OAuth2AccessToken = accessToken
+};
+
+if (!mailman.SendEmail(email))
+{
+    throw new InvalidOperationException(mailman.LastErrorText);
+}
+```
+
+When `OAuth2AccessToken` is set, Chilkat uses SMTP XOAUTH2 when supported by the server. Leave `SmtpPassword` empty.
+
+For a long-running Windows Service, cache the access token until shortly before expiry instead of requesting a new token for every message. If SMTP authentication fails because the token expired, acquire a new token and retry according to the normal queue policy.
+
+Store `TenantId`, `ClientId`, and especially `ClientSecret` outside source control, preferably as machine-level environment variables, Windows-protected secrets, or a dedicated secret store. The client secret must never be written to application logs.
 
 ## Security
 
