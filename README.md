@@ -7,7 +7,7 @@ MailRelay accepts SMTP messages locally (default `127.0.0.1:2525`), saves them t
 ## Flow
 
 ```text
-SQL Server Database Mail
+Application / Local SMTP client
         |
         | SMTP 127.0.0.1:2525
         v
@@ -15,10 +15,12 @@ MailRelay
         |
         +--> durable local queue
         |
-        | SMTP / SMTPS
+        | SMTP / SMTPS / OAuth2
         v
 External SMTP server
 ```
+
+Any local application that can send mail through a standard SMTP server can use MailRelay as a forwarding relay.
 
 A message is acknowledged to the SMTP client only after it has been persisted to the local queue. If the upstream SMTP server is unavailable, MailRelay keeps the message locally and retries automatically.
 
@@ -67,9 +69,9 @@ sc.exe delete MailRelay
 Deleting the Windows Service does **not** delete the published application, logs, or queued messages. Remove those directories separately only when they are no longer needed.
 
 
-## SQL Server Database Mail
+## SQL Server Database Mail example
 
-MailRelay is useful when SQL Server Database Mail cannot communicate directly with the real SMTP server, for example when the provider requires a TLS mode, authentication mechanism, or OAuth flow that Database Mail cannot handle directly.
+SQL Server Database Mail is a useful real-world example because it can have limitations when the upstream provider requires specific TLS modes, authentication mechanisms, or OAuth2 flows that Database Mail cannot handle directly. In that case, Database Mail can send to MailRelay over localhost and let MailRelay handle the external SMTP connection.
 
 Configure the Database Mail account to use MailRelay:
 
