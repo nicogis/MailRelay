@@ -15,11 +15,16 @@ public sealed partial class Worker : BackgroundService
 
     private readonly ILogger<Worker> _logger;
     private readonly RelayOptions _options;
+    private static readonly HttpClient HttpClient = new();
+
     private readonly SemaphoreSlim _queueSignal = new(0, 1);
+    private readonly SemaphoreSlim _oauthTokenLock = new(1, 1);
 
     private TcpListener? _listener;
     private string _queueDirectory = "";
     private string _failedDirectory = "";
+    private string? _oauthAccessToken;
+    private DateTime _oauthTokenExpiresUtc;
 
     public Worker(
         ILogger<Worker> logger,
@@ -574,6 +579,28 @@ public sealed partial class Worker : BackgroundService
         IReadOnlyCollection<string> recipients,
         CancellationToken ct)
     {
+        string? oauthAccessToken = null;
+
+        try
+        {
+            if (UsesOAuth2())
+            {
+                oauthAccessToken =
+                    await GetOAuthAccessTokenAsync(ct);
+            }
+            else if (!UsesPasswordAuthentication())
+            {
+                throw new InvalidOperationException(
+                    $"Unsupported AuthenticationMode '{_options.AuthenticationMode}'. " +
+                    "Use 'Password' or 'OAuth2'.");
+            }
+        }
+        catch (Exception ex)
+        {
+            LogOAuthTokenError(_logger, ex);
+            return false;
+        }
+
         return await Task.Run(
             () =>
             {
@@ -601,9 +628,18 @@ public sealed partial class Worker : BackgroundService
                         SmtpHost = _options.SmtpHost,
                         SmtpPort = _options.SmtpPort,
                         SmtpSsl = _options.SmtpSsl,
+                        StartTLS = _options.SmtpStartTls,
                         SmtpUsername = _options.Username,
-                        SmtpPassword = _options.Password
+                        SmtpPassword = UsesOAuth2()
+                            ? ""
+                            : _options.Password
                     };
+
+                    if (oauthAccessToken is not null)
+                    {
+                        mailman.OAuth2AccessToken =
+                            oauthAccessToken;
+                    }
 
                     LogForwardingMail(
                         _logger,
@@ -632,6 +668,138 @@ public sealed partial class Worker : BackgroundService
                 }
             },
             ct);
+    }
+
+    private bool UsesOAuth2()
+        => string.Equals(
+            _options.AuthenticationMode,
+            "OAuth2",
+            StringComparison.OrdinalIgnoreCase);
+
+    private bool UsesPasswordAuthentication()
+        => string.Equals(
+            _options.AuthenticationMode,
+            "Password",
+            StringComparison.OrdinalIgnoreCase);
+
+    private async Task<string> GetOAuthAccessTokenAsync(
+        CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(_oauthAccessToken) &&
+            _oauthTokenExpiresUtc >
+                DateTime.UtcNow.AddMinutes(5))
+        {
+            return _oauthAccessToken;
+        }
+
+        await _oauthTokenLock.WaitAsync(ct);
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(_oauthAccessToken) &&
+                _oauthTokenExpiresUtc >
+                    DateTime.UtcNow.AddMinutes(5))
+            {
+                return _oauthAccessToken;
+            }
+
+            ValidateOAuthOptions();
+
+            using var content = new FormUrlEncodedContent(
+                new Dictionary<string, string>
+                {
+                    ["client_id"] = _options.OAuth.ClientId,
+                    ["client_secret"] = _options.OAuth.ClientSecret,
+                    ["scope"] = _options.OAuth.Scope,
+                    ["grant_type"] = "client_credentials"
+                });
+
+            using var response = await HttpClient.PostAsync(
+                $"https://login.microsoftonline.com/{_options.OAuth.TenantId}/oauth2/v2.0/token",
+                content,
+                ct);
+
+            var responseBody =
+                await response.Content.ReadAsStringAsync(ct);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(
+                    $"OAuth token request failed with HTTP {(int)response.StatusCode}.");
+            }
+
+            using var json = JsonDocument.Parse(responseBody);
+
+            var root = json.RootElement;
+
+            if (!root.TryGetProperty(
+                    "access_token",
+                    out var tokenElement))
+            {
+                throw new InvalidOperationException(
+                    "OAuth token response does not contain access_token.");
+            }
+
+            _oauthAccessToken =
+                tokenElement.GetString()
+                ?? throw new InvalidOperationException(
+                    "OAuth access_token is empty.");
+
+            var expiresIn =
+                root.TryGetProperty(
+                    "expires_in",
+                    out var expiresElement) &&
+                expiresElement.TryGetInt32(out var seconds)
+                    ? seconds
+                    : 3600;
+
+            _oauthTokenExpiresUtc =
+                DateTime.UtcNow.AddSeconds(
+                    Math.Max(60, expiresIn));
+
+            LogOAuthTokenAcquired(
+                _logger,
+                _oauthTokenExpiresUtc);
+
+            return _oauthAccessToken;
+        }
+        finally
+        {
+            _oauthTokenLock.Release();
+        }
+    }
+
+    private void ValidateOAuthOptions()
+    {
+        if (string.IsNullOrWhiteSpace(_options.Username))
+        {
+            throw new InvalidOperationException(
+                "Relay:Username is required for OAuth2 SMTP.");
+        }
+
+        if (string.IsNullOrWhiteSpace(_options.OAuth.TenantId))
+        {
+            throw new InvalidOperationException(
+                "Relay:OAuth:TenantId is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(_options.OAuth.ClientId))
+        {
+            throw new InvalidOperationException(
+                "Relay:OAuth:ClientId is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(_options.OAuth.ClientSecret))
+        {
+            throw new InvalidOperationException(
+                "Relay:OAuth:ClientSecret is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(_options.OAuth.Scope))
+        {
+            throw new InvalidOperationException(
+                "Relay:OAuth:Scope is required.");
+        }
     }
 
     private void InitializeChilkat()
@@ -759,6 +927,14 @@ public sealed partial class Worker : BackgroundService
         SocketError socketErrorCode);
 
     [LoggerMessage(
+        EventId = 1010,
+        Level = LogLevel.Information,
+        Message = "OAuth2 access token acquired; expires at {ExpiresUtc:u}.")]
+    private static partial void LogOAuthTokenAcquired(
+        ILogger logger,
+        DateTime expiresUtc);
+
+    [LoggerMessage(
         EventId = 2001,
         Level = LogLevel.Error,
         Message = "Error accepting SMTP connection.")]
@@ -839,4 +1015,12 @@ public sealed partial class Worker : BackgroundService
         ILogger logger,
         string messageId,
         int attempts);
+
+    [LoggerMessage(
+        EventId = 2011,
+        Level = LogLevel.Error,
+        Message = "Unable to acquire OAuth2 access token.")]
+    private static partial void LogOAuthTokenError(
+        ILogger logger,
+        Exception exception);
 }
