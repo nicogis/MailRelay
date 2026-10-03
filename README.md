@@ -203,73 +203,6 @@ The queue is persistent across service restarts.
 
 Because queued `.eml` files may contain message bodies and attachments, protect the queue directory with appropriate NTFS permissions.
 
-## Configuration and secrets
-
-The repository contains only non-sensitive defaults in `MailRelay/appsettings.json`.
-
-Do **not** commit SMTP passwords, usernames, Chilkat license keys, or other secrets.
-
-### Development: appsettings.Local.json
-
-For local development, create:
-
-```text
-MailRelay/appsettings.Local.json
-```
-
-It is ignored by Git and loaded after `appsettings.json`.
-
-Example:
-
-```json
-{
-  "Relay": {
-    "SmtpHost": "mail.example.com",
-    "SmtpPort": 465,
-    "SmtpSsl": true,
-    "Username": "smtp-user",
-    "Password": "smtp-password",
-    "ChilkatLicenseKey": "your-license-key"
-  }
-}
-```
-
-### Production: environment variables
-
-For a Windows Service, prefer machine-level environment variables:
-
-```text
-Relay__Username
-Relay__Password
-Relay__OAuth__TenantId
-Relay__OAuth__ClientId
-Relay__OAuth__ClientSecret
-Relay__ChilkatLicenseKey
-```
-
-Example PowerShell:
-
-```powershell
-[Environment]::SetEnvironmentVariable(
-    "Relay__Username",
-    "smtp-user",
-    "Machine")
-
-[Environment]::SetEnvironmentVariable(
-    "Relay__Password",
-    "smtp-password",
-    "Machine")
-
-[Environment]::SetEnvironmentVariable(
-    "Relay__ChilkatLicenseKey",
-    "your-license-key",
-    "Machine")
-```
-
-Restart the Windows Service after changing machine-level environment variables.
-
-
-
 ## OAuth2 / XOAUTH2 SMTP option
 
 MailRelay supports both password authentication and OAuth2/XOAUTH2. Select the mode with `Relay:AuthenticationMode` using either `Password` or `OAuth2`. Chilkat authenticates with OAuth2 by setting `MailMan.OAuth2AccessToken`.
@@ -406,10 +339,7 @@ When `OAuth2AccessToken` is set, Chilkat uses SMTP XOAUTH2 when supported by the
 
 MailRelay caches the OAuth2 access token and requests a new one when the cached token is within five minutes of expiry. If token acquisition or SMTP delivery fails, the message remains in the durable queue and follows the normal retry policy.
 
-Store `TenantId`, `ClientId`, and especially `ClientSecret` outside source control, preferably as machine-level environment variables, Windows-protected secrets, or a dedicated secret store. The client secret must never be written to application logs.
-
 ## Security
 
 The default SMTP listener binds only to `127.0.0.1`, so it is not exposed to the LAN or Internet.
 
-If a secret is accidentally committed, rotate it immediately because removing it from the latest file does not remove it from Git history.
