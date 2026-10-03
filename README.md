@@ -275,6 +275,12 @@ For unattended services, use the OAuth2 **client credentials** flow when the mai
 
 For Microsoft 365 / Exchange Online, the application must first be authorized for app-only SMTP access in the tenant and for the mailbox that it is allowed to send as. Microsoft supports both Exchange service-principal permission onboarding and the newer Exchange Application RBAC model. Use the model appropriate for the tenant before testing the code below.
 
+Chilkat documents the complete Entra ID / Exchange Online setup here:
+
+- [Sending Office365 Email using SMTP with OAuth2 without Browser Interaction](https://www.chilkatsoft.com/office365_smtp_oauth2_without_browser_interaction.asp)
+
+That guide covers the Entra application registration, the `SMTP.SendAsApp` application permission, admin consent, client secret, Exchange Online service-principal registration, mailbox SendAs/FullAccess permissions, and SMTP AUTH requirements.
+
 ### Microsoft 365 example
 
 The SMTP endpoint is normally:
