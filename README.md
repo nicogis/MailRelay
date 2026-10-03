@@ -241,6 +241,9 @@ For a Windows Service, prefer machine-level environment variables:
 ```text
 Relay__Username
 Relay__Password
+Relay__OAuth__TenantId
+Relay__OAuth__ClientId
+Relay__OAuth__ClientSecret
 Relay__ChilkatLicenseKey
 ```
 
@@ -269,7 +272,7 @@ Restart the Windows Service after changing machine-level environment variables.
 
 ## OAuth2 / XOAUTH2 SMTP option
 
-MailRelay currently supports the username/password SMTP configuration shown above. Chilkat can also authenticate to an SMTP server with an OAuth2 access token by setting `MailMan.OAuth2AccessToken`.
+MailRelay supports both password authentication and OAuth2/XOAUTH2. Select the mode with `Relay:AuthenticationMode` using either `Password` or `OAuth2`. Chilkat authenticates with OAuth2 by setting `MailMan.OAuth2AccessToken`.
 
 For unattended services, use the OAuth2 **client credentials** flow when the mail provider supports application-only SMTP access. This flow does not require opening a browser: the service requests an access token directly from the provider's token endpoint and then uses the token for SMTP XOAUTH2 authentication.
 
@@ -282,6 +285,36 @@ Chilkat documents the complete Entra ID / Exchange Online setup here:
 That guide covers the Entra application registration, the `SMTP.SendAsApp` application permission, admin consent, client secret, Exchange Online service-principal registration, mailbox SendAs/FullAccess permissions, and SMTP AUTH requirements.
 
 ### Microsoft 365 example
+
+To switch MailRelay to OAuth2, configure:
+
+```json
+{
+  "Relay": {
+    "SmtpHost": "smtp.office365.com",
+    "SmtpPort": 587,
+    "SmtpSsl": false,
+    "SmtpStartTls": true,
+    "AuthenticationMode": "OAuth2",
+    "Username": "sender@example.com",
+    "Password": "",
+    "OAuth": {
+      "TenantId": "your-tenant-id",
+      "ClientId": "your-client-id",
+      "ClientSecret": "",
+      "Scope": "https://outlook.office365.com/.default"
+    }
+  }
+}
+```
+
+For password-based SMTP, set:
+
+```json
+"AuthenticationMode": "Password"
+```
+
+and configure `Username` and `Password` as before.
 
 The SMTP endpoint is normally:
 
@@ -371,7 +404,7 @@ if (!mailman.SendEmail(email))
 
 When `OAuth2AccessToken` is set, Chilkat uses SMTP XOAUTH2 when supported by the server. Leave `SmtpPassword` empty.
 
-For a long-running Windows Service, cache the access token until shortly before expiry instead of requesting a new token for every message. If SMTP authentication fails because the token expired, acquire a new token and retry according to the normal queue policy.
+MailRelay caches the OAuth2 access token and requests a new one when the cached token is within five minutes of expiry. If token acquisition or SMTP delivery fails, the message remains in the durable queue and follows the normal retry policy.
 
 Store `TenantId`, `ClientId`, and especially `ClientSecret` outside source control, preferably as machine-level environment variables, Windows-protected secrets, or a dedicated secret store. The client secret must never be written to application logs.
 
