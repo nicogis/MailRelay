@@ -22,6 +22,8 @@ External SMTP server
 
 Any local application that can send mail through a standard SMTP server can use MailRelay as a forwarding relay.
 
+The local listener address and port are configurable through `Relay:ListenAddress` and `Relay:ListenPort`, while the upstream SMTP host and port are configurable through `Relay:SmtpHost` and `Relay:SmtpPort`.
+
 A message is acknowledged to the SMTP client only after it has been persisted to the local queue. If the upstream SMTP server is unavailable, MailRelay keeps the message locally and retries automatically.
 
 
@@ -51,13 +53,26 @@ Verify the service:
 Get-Service MailRelay
 ```
 
-Verify that the local SMTP listener is active:
+Before choosing the listener port, verify that it is not already in use by another process. For example, for port `2525`:
+
+```powershell
+Get-NetTCPConnection -LocalPort 2525 -ErrorAction SilentlyContinue |
+    Select-Object LocalAddress, LocalPort, State, OwningProcess
+```
+
+If the command returns no rows, the port is currently free. If it returns a process ID, identify the process with:
+
+```powershell
+Get-Process -Id <PID>
+```
+
+After starting MailRelay, verify that the local SMTP listener is active:
 
 ```powershell
 Get-NetTCPConnection -LocalPort 2525 -ErrorAction SilentlyContinue
 ```
 
-The expected listener is `127.0.0.1:2525`.
+The expected default listener is `127.0.0.1:2525`. Both the address and port can be changed in `appsettings.json`.
 
 ### Stop and remove the service
 
