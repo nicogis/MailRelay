@@ -129,6 +129,8 @@ public sealed partial class Worker : BackgroundService
                             StringComparison.OrdinalIgnoreCase))
                     {
                         await Reply(writer, "250-localhost");
+                        await Reply(writer, "250-PIPELINING");
+                        await Reply(writer, "250-8BITMIME");
 
                         if (_options.LocalAuthentication.Enabled)
                         {
