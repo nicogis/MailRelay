@@ -13,6 +13,7 @@ public sealed class RelayOptions
     public string AuthenticationMode { get; set; } = "Password";
     public string Username { get; set; } = "";
     public string Password { get; set; } = "";
+    public LocalAuthenticationOptions LocalAuthentication { get; set; } = new();
     public OAuthOptions OAuth { get; set; } = new();
     public string? ChilkatLicenseKey { get; set; }
 
@@ -29,4 +30,11 @@ public sealed class OAuthOptions
     public string ClientSecret { get; set; } = "";
     public string Scope { get; set; } =
         "https://outlook.office365.com/.default";
+}
+
+public sealed class LocalAuthenticationOptions
+{
+    public bool Enabled { get; set; }
+    public string Username { get; set; } = "";
+    public string Password { get; set; } = "";
 }
