@@ -84,6 +84,32 @@ sc.exe delete MailRelay
 Deleting the Windows Service does **not** delete the published application, logs, or queued messages. Remove those directories separately only when they are no longer needed.
 
 
+## Optional local SMTP authentication
+
+Some applications require SMTP credentials even when the relay runs locally. MailRelay can optionally require SMTP `AUTH LOGIN` on the listener.
+
+Configuration example:
+
+```json
+"LocalAuthentication": {
+  "Enabled": true,
+  "Username": "local-client",
+  "Password": "local-password"
+}
+```
+
+When enabled, MailRelay advertises:
+
+```text
+250-AUTH LOGIN
+```
+
+and rejects `MAIL FROM` with `530 Authentication required` until the client authenticates successfully.
+
+These credentials apply only between the local SMTP client and MailRelay. They are independent from the credentials or OAuth2 settings used for the upstream SMTP server.
+
+This is useful for applications such as System Center Data Protection Manager (DPM), which may require SMTP credentials before allowing the notification configuration to be saved.
+
 ## SQL Server Database Mail example
 
 SQL Server Database Mail is a useful real-world example because it can have limitations when the upstream provider requires specific TLS modes, authentication mechanisms, or OAuth2 flows that Database Mail cannot handle directly. In that case, Database Mail can send to MailRelay over localhost and let MailRelay handle the external SMTP connection.
@@ -93,7 +119,7 @@ Configure the Database Mail account to use MailRelay:
 - SMTP server: `127.0.0.1`
 - Port: `2525`
 - SSL: disabled
-- Authentication: Anonymous
+- Authentication: Anonymous when `LocalAuthentication.Enabled` is `false`, or Basic/`AUTH LOGIN` when it is `true`
 - E-mail address: the real sender address
 
 The flow becomes:
