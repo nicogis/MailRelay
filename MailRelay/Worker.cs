@@ -38,6 +38,7 @@ public sealed partial class Worker : BackgroundService
         CancellationToken stoppingToken)
     {
         InitializeChilkat();
+        ValidateLocalAuthenticationOptions();
         InitializeQueue();
 
         _listener = new TcpListener(
@@ -107,6 +108,8 @@ public sealed partial class Worker : BackgroundService
 
                 string? from = null;
                 var recipients = new List<string>();
+                var authenticated =
+                    !_options.LocalAuthentication.Enabled;
 
                 while (!ct.IsCancellationRequested)
                 {
@@ -122,6 +125,12 @@ public sealed partial class Worker : BackgroundService
                             StringComparison.OrdinalIgnoreCase))
                     {
                         await Reply(writer, "250-localhost");
+
+                        if (_options.LocalAuthentication.Enabled)
+                        {
+                            await Reply(writer, "250-AUTH LOGIN");
+                        }
+
                         await Reply(
                             writer,
                             $"250 SIZE {_options.MaxMessageSizeBytes}");
@@ -133,9 +142,40 @@ public sealed partial class Worker : BackgroundService
                         await Reply(writer, "250 localhost");
                     }
                     else if (line.StartsWith(
+                                 "AUTH LOGIN",
+                                 StringComparison.OrdinalIgnoreCase))
+                    {
+                        authenticated = await AuthenticateLocalClientAsync(
+                            line,
+                            reader,
+                            writer,
+                            ct);
+
+                        if (authenticated)
+                        {
+                            await Reply(
+                                writer,
+                                "235 Authentication successful");
+                        }
+                        else
+                        {
+                            await Reply(
+                                writer,
+                                "535 Authentication failed");
+                        }
+                    }
+                    else if (line.StartsWith(
                                  "MAIL FROM:",
                                  StringComparison.OrdinalIgnoreCase))
                     {
+                        if (!authenticated)
+                        {
+                            await Reply(
+                                writer,
+                                "530 Authentication required");
+                            continue;
+                        }
+
                         from = Address(line["MAIL FROM:".Length..]);
                         recipients.Clear();
                         await Reply(writer, "250 OK");
@@ -241,6 +281,114 @@ public sealed partial class Worker : BackgroundService
         catch (Exception ex)
         {
             LogClientConnectionError(_logger, ex);
+        }
+    }
+
+    private async Task<bool> AuthenticateLocalClientAsync(
+        string authLine,
+        StreamReader reader,
+        StreamWriter writer,
+        CancellationToken ct)
+    {
+        string? username;
+
+        var parts = authLine.Split(
+            ' ',
+            StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length >= 3)
+        {
+            username = DecodeBase64(parts[2]);
+        }
+        else
+        {
+            await Reply(writer, "334 VXNlcm5hbWU6");
+
+            var usernameBase64 =
+                await reader.ReadLineAsync(ct);
+
+            username = DecodeBase64(usernameBase64);
+        }
+
+        if (username is null)
+        {
+            return false;
+        }
+
+        await Reply(writer, "334 UGFzc3dvcmQ6");
+
+        var passwordBase64 =
+            await reader.ReadLineAsync(ct);
+
+        var password =
+            DecodeBase64(passwordBase64);
+
+        if (password is null)
+        {
+            return false;
+        }
+
+        return FixedTimeEquals(
+                   username,
+                   _options.LocalAuthentication.Username) &&
+               FixedTimeEquals(
+                   password,
+                   _options.LocalAuthentication.Password);
+    }
+
+    private static string? DecodeBase64(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Encoding.UTF8.GetString(
+                Convert.FromBase64String(value.Trim()));
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+
+    private static bool FixedTimeEquals(
+        string left,
+        string right)
+    {
+        var leftBytes = Encoding.UTF8.GetBytes(left);
+        var rightBytes = Encoding.UTF8.GetBytes(right);
+
+        if (leftBytes.Length != rightBytes.Length)
+        {
+            return false;
+        }
+
+        return System.Security.Cryptography.CryptographicOperations
+            .FixedTimeEquals(leftBytes, rightBytes);
+    }
+
+    private void ValidateLocalAuthenticationOptions()
+    {
+        if (!_options.LocalAuthentication.Enabled)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(
+                _options.LocalAuthentication.Username))
+        {
+            throw new InvalidOperationException(
+                "Relay:LocalAuthentication:Username is required when local authentication is enabled.");
+        }
+
+        if (string.IsNullOrWhiteSpace(
+                _options.LocalAuthentication.Password))
+        {
+            throw new InvalidOperationException(
+                "Relay:LocalAuthentication:Password is required when local authentication is enabled.");
         }
     }
 
