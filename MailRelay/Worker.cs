@@ -145,6 +145,8 @@ public sealed partial class Worker : BackgroundService
                                  "AUTH LOGIN",
                                  StringComparison.OrdinalIgnoreCase))
                     {
+                        LogLocalAuthLoginReceived(_logger);
+
                         authenticated = await AuthenticateLocalClientAsync(
                             line,
                             reader,
@@ -153,12 +155,16 @@ public sealed partial class Worker : BackgroundService
 
                         if (authenticated)
                         {
+                            LogLocalAuthenticationSuccessful(_logger);
+
                             await Reply(
                                 writer,
                                 "235 Authentication successful");
                         }
                         else
                         {
+                            LogLocalAuthenticationFailed(_logger);
+
                             await Reply(
                                 writer,
                                 "535 Authentication failed");
@@ -1081,6 +1087,27 @@ public sealed partial class Worker : BackgroundService
     private static partial void LogOAuthTokenAcquired(
         ILogger logger,
         DateTime expiresUtc);
+
+    [LoggerMessage(
+        EventId = 1011,
+        Level = LogLevel.Information,
+        Message = "Local SMTP AUTH LOGIN received.")]
+    private static partial void LogLocalAuthLoginReceived(
+        ILogger logger);
+
+    [LoggerMessage(
+        EventId = 1012,
+        Level = LogLevel.Information,
+        Message = "Local SMTP authentication successful.")]
+    private static partial void LogLocalAuthenticationSuccessful(
+        ILogger logger);
+
+    [LoggerMessage(
+        EventId = 2012,
+        Level = LogLevel.Warning,
+        Message = "Local SMTP authentication failed.")]
+    private static partial void LogLocalAuthenticationFailed(
+        ILogger logger);
 
     [LoggerMessage(
         EventId = 2001,
