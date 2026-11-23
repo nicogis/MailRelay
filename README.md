@@ -84,31 +84,38 @@ sc.exe delete MailRelay
 Deleting the Windows Service does **not** delete the published application, logs, or queued messages. Remove those directories separately only when they are no longer needed.
 
 
-## Optional local SMTP authentication
+## System Center DPM 2022 example
 
-Some applications require SMTP credentials even when the relay runs locally. MailRelay can optionally require SMTP `AUTH LOGIN` on the listener.
+System Center Data Protection Manager (DPM) can use MailRelay as a local SMTP hop without requiring SMTP authentication on the MailRelay listener.
 
-Configuration example:
+A configuration verified with DPM 2022 UR2 Refresh is:
 
-```json
-"LocalAuthentication": {
-  "Enabled": true,
-  "Username": "local-client",
-  "Password": "local-password"
-}
-```
-
-When enabled, MailRelay advertises:
+- MailRelay listens on `127.0.0.1:2525`
+- the MailRelay listener remains anonymous
+- create a dedicated local Windows user with no additional group memberships
+- in DPM, select **Windows Authentication**
+- specify the account as `.\\username` together with its password
+- if DPM has stale SMTP credentials from a previous configuration, remove the `smtpuser` and `smtppassword` values under:
 
 ```text
-250-AUTH LOGIN
+HKEY_LOCAL_MACHINE\Software\Microsoft\Microsoft Data Protection Manager\Notification
 ```
 
-and rejects `MAIL FROM` with `530 Authentication required` until the client authenticates successfully.
+Then reopen the DPM notification configuration and save the SMTP settings again.
 
-These credentials apply only between the local SMTP client and MailRelay. They are independent from the credentials or OAuth2 settings used for the upstream SMTP server.
+With this setup, DPM authenticates using the local Windows account for its own notification configuration, while the SMTP session to MailRelay itself does not require SMTP `AUTH`. MailRelay then handles authentication to the external SMTP server independently.
 
-This is useful for applications such as System Center Data Protection Manager (DPM), which may require SMTP credentials before allowing the notification configuration to be saved.
+The resulting flow is:
+
+```text
+System Center DPM
+    -> SMTP 127.0.0.1:2525
+    -> MailRelay durable queue
+    -> authenticated external SMTP server
+    -> recipient
+```
+
+> The registry values above are specific to DPM notification configuration. Back up the relevant registry key before changing it.
 
 ## SQL Server Database Mail example
 
@@ -119,7 +126,7 @@ Configure the Database Mail account to use MailRelay:
 - SMTP server: `127.0.0.1`
 - Port: `2525`
 - SSL: disabled
-- Authentication: Anonymous when `LocalAuthentication.Enabled` is `false`, or Basic/`AUTH LOGIN` when it is `true`
+- Authentication: Anonymous
 - E-mail address: the real sender address
 
 The flow becomes:
