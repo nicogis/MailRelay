@@ -120,6 +120,10 @@ public sealed partial class Worker : BackgroundService
                         break;
                     }
 
+                    LogSmtpCommandReceived(
+                        _logger,
+                        GetSmtpCommandName(line));
+
                     if (line.StartsWith(
                             "EHLO ",
                             StringComparison.OrdinalIgnoreCase))
@@ -977,6 +981,22 @@ public sealed partial class Worker : BackgroundService
         LogChilkatInitialized(_logger);
     }
 
+    private static string GetSmtpCommandName(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return "(empty)";
+        }
+
+        var separator = line.IndexOf(' ');
+
+        return (separator > 0
+                ? line[..separator]
+                : line)
+            .Trim()
+            .ToUpperInvariant();
+    }
+
     private static string Address(string value)
     {
         value = value.Trim();
@@ -1101,6 +1121,14 @@ public sealed partial class Worker : BackgroundService
         Message = "Local SMTP authentication successful.")]
     private static partial void LogLocalAuthenticationSuccessful(
         ILogger logger);
+
+    [LoggerMessage(
+        EventId = 1013,
+        Level = LogLevel.Information,
+        Message = "SMTP command received: {Command}")]
+    private static partial void LogSmtpCommandReceived(
+        ILogger logger,
+        string command);
 
     [LoggerMessage(
         EventId = 2012,
