@@ -132,7 +132,7 @@ public sealed partial class Worker : BackgroundService
 
                         if (_options.LocalAuthentication.Enabled)
                         {
-                            await Reply(writer, "250-AUTH LOGIN");
+                            await Reply(writer, "250-AUTH LOGIN PLAIN");
                         }
 
                         await Reply(
@@ -149,9 +149,42 @@ public sealed partial class Worker : BackgroundService
                                  "AUTH LOGIN",
                                  StringComparison.OrdinalIgnoreCase))
                     {
-                        LogLocalAuthLoginReceived(_logger);
+                        LogLocalAuthMechanismReceived(
+                            _logger,
+                            "LOGIN");
 
                         authenticated = await AuthenticateLocalClientAsync(
+                            line,
+                            reader,
+                            writer,
+                            ct);
+
+                        if (authenticated)
+                        {
+                            LogLocalAuthenticationSuccessful(_logger);
+
+                            await Reply(
+                                writer,
+                                "235 Authentication successful");
+                        }
+                        else
+                        {
+                            LogLocalAuthenticationFailed(_logger);
+
+                            await Reply(
+                                writer,
+                                "535 Authentication failed");
+                        }
+                    }
+                    else if (line.StartsWith(
+                                 "AUTH PLAIN",
+                                 StringComparison.OrdinalIgnoreCase))
+                    {
+                        LogLocalAuthMechanismReceived(
+                            _logger,
+                            "PLAIN");
+
+                        authenticated = await AuthenticateLocalClientPlainAsync(
                             line,
                             reader,
                             writer,
@@ -337,6 +370,67 @@ public sealed partial class Worker : BackgroundService
         {
             return false;
         }
+
+        return FixedTimeEquals(
+                   username,
+                   _options.LocalAuthentication.Username) &&
+               FixedTimeEquals(
+                   password,
+                   _options.LocalAuthentication.Password);
+    }
+
+    private async Task<bool> AuthenticateLocalClientPlainAsync(
+        string authLine,
+        StreamReader reader,
+        StreamWriter writer,
+        CancellationToken ct)
+    {
+        var parts = authLine.Split(
+            ' ',
+            3,
+            StringSplitOptions.RemoveEmptyEntries);
+
+        string? payloadBase64;
+
+        if (parts.Length >= 3)
+        {
+            payloadBase64 = parts[2];
+        }
+        else
+        {
+            await Reply(writer, "334");
+
+            payloadBase64 =
+                await reader.ReadLineAsync(ct);
+        }
+
+        if (string.IsNullOrWhiteSpace(payloadBase64))
+        {
+            return false;
+        }
+
+        string payload;
+
+        try
+        {
+            payload = Encoding.UTF8.GetString(
+                Convert.FromBase64String(
+                    payloadBase64.Trim()));
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+
+        var fields = payload.Split('\0');
+
+        if (fields.Length < 3)
+        {
+            return false;
+        }
+
+        var username = fields[^2];
+        var password = fields[^1];
 
         return FixedTimeEquals(
                    username,
@@ -1111,9 +1205,10 @@ public sealed partial class Worker : BackgroundService
     [LoggerMessage(
         EventId = 1011,
         Level = LogLevel.Information,
-        Message = "Local SMTP AUTH LOGIN received.")]
-    private static partial void LogLocalAuthLoginReceived(
-        ILogger logger);
+        Message = "Local SMTP AUTH {Mechanism} received.")]
+    private static partial void LogLocalAuthMechanismReceived(
+        ILogger logger,
+        string mechanism);
 
     [LoggerMessage(
         EventId = 1012,
