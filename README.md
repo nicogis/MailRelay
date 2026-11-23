@@ -94,7 +94,7 @@ A configuration verified with DPM 2022 UR2 Refresh is:
 - the MailRelay listener remains anonymous
 - create a dedicated local Windows user with no additional group memberships
 - in DPM, select **Windows Authentication**
-- specify the account as `.\\username` together with its password
+- specify the account as `.\username` together with its password
 - if DPM has stale SMTP credentials from a previous configuration, remove the `smtpuser` and `smtppassword` values under:
 
 ```text
